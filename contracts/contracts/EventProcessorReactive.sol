@@ -24,7 +24,7 @@ import {DataFeedAdministrator} from './DataFeedAdministrator.sol';
  * 
  * Upon receipt of a price update, the contract will determine which strategies should be executed 
  */
-contract LPStrategyCoordinatorReactive is AbstractReactive, DataFeedAdministrator {
+contract EventProcessorReactive is AbstractReactive, DataFeedAdministrator {
     using MarketLib for mapping(uint256 => Market);
 
     /// @notice event topic used to identify requests for this contract
@@ -137,9 +137,9 @@ contract LPStrategyCoordinatorReactive is AbstractReactive, DataFeedAdministrato
         }
 
         // Perform the admin function based on the function signature passed in topic2
-        if(topic2 == SUBSCRIBE_DATA_FEED){
+        if(topic0 == uint256(SubscribeDataFeed.selector)){
             _subscribeDataFeed(data);
-        } else if(topic2 == SUBSCRIBE_DATA_FEED){
+        } else if(topic2 == uint256(UnSubscribeDataFeed.selector)){
             _unsubscribeDataFeed(data);
         }
     }

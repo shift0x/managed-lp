@@ -3,13 +3,22 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "deploy": "ts-node ./scripts/deploy.ts"
   },
   "author": "",
   "license": "ISC",
   "description": "",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@types/figlet": "^1.7.0",
+    "@types/prompts": "^2.4.9",
     "hardhat": "^2.22.15"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.1.0",
+    "commander": "^12.1.0",
+    "figlet": "^1.8.0",
+    "prompts": "^2.4.2",
+    "ts-node": "^10.9.2"
   }
 }

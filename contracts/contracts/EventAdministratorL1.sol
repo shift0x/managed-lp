@@ -29,6 +29,7 @@ import {
  */
 contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
     using SubscriptionsLib for Subscription[];
+    using SubscriptionsLib for Subscription;
     using PythFeedLib for mapping(bytes32 => uint256);
 
     /// @notice the admin of the contract
@@ -118,10 +119,12 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
     ) public view returns(Event[] memory output) {
         output = events[subscriptionId];
 
+        // return all events if the count is unspecified of less than the total event count
         if(count == 0 || count >= output.length){
             return output;
         } 
 
+        // return the events in reverse order up to the max count
         Event[] memory filteredOutput = new Event[](count);
 
         uint256 startIndex = output.length - 1;
@@ -155,20 +158,18 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
             emit CancelSubscription(processorId, id);
 
             return;
-        }
+        } 
 
-        // call the receiver and store the event in the subscription history
-        Event memory action = Event({
-            subscription: subscription,
-            timestamp: block.timestamp,
-            data: data,
-            success: false,
-            output: new bytes(0)
-        });
-        
-        (action.success, action.output) = subscription.to.call(subscription.args);
+        // execute and store the action defined by the subscription
+        Event memory action = subscription.execute(data);
 
         events[id].push(action);
+ 
+        // unregister the subscription from the market feeds if the subscription
+        // is not persistent (i.e block number triggers execute only once)
+        if(subscription.feedId != 0 && subscription.isPersistent == false){
+            _pythFeedSubscriptions.unsubscribe(processorId, bytes32(subscription.feedId));
+        }
     }
 
 
@@ -196,7 +197,7 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         _pythFeedSubscriptions.subscribe(processorId, feedId);
 
         // create the new local subscription
-        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit);
+        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, uint256(feedId), false);
 
         // create the reactive subscription
         ReactiveTriggers.newPriceLevelTrigger(processorId, newSubscription.id, feedId, priceMin, priceMax, gasLimit);
@@ -218,7 +219,7 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         uint256 gasLimit
     ) external onlyAdmin {
         // create the new local subscription
-        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit);
+        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, 0, false);
 
         // create the reactive subscription
         ReactiveTriggers.newBlockNumberTrigger(processorId, newSubscription.id, chainId, blockNumber, gasLimit);
@@ -238,7 +239,7 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         uint256 gasLimit
     ) external onlyAdmin {
         // create the new local subscription
-        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit);
+        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, 0, true);
 
         // create the reactive subscription
         ReactiveTriggers.newTimedEventTrigger(processorId, newSubscription.id, interval, gasLimit);
@@ -272,7 +273,7 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         uint256 gasLimit
     ) external onlyAdmin {
         // create the new local subscription
-        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit);
+        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, 0, true);
 
         // create the reactive subscription
         ReactiveTriggers.newEventSubscription(processorId, newSubscription.id, chainId, emitter, topic0, topic1, topic2, topic3, gasLimit);

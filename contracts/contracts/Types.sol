@@ -16,6 +16,8 @@ struct PriceLevelTrigger {
 
 struct Subscription {
     uint256 id;
+    uint256 feedId;
+    bool isPersistent;
     bool active;
     address to;
     bytes args;

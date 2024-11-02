@@ -2,56 +2,280 @@
 pragma solidity ^0.8.27;
 
 import {DataFeedAdministrator} from './DataFeedAdministrator.sol';
+import {AbstractPayer} from './AbstractPayer.sol';
+import {IPayable} from './interfaces/IPayable.sol';
+import {SubscriptionsLib} from './lib/SubscriptionsLib.sol';
+import {PythFeedLib} from './lib/PythFeedLib.sol';
+import {ReactiveTriggers} from './lib/ReactiveTriggers.sol';
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import {
+    Subscription,
+    Event
+} from './Types.sol';
 
-contract EventAdministratorL1 is DataFeedAdministrator, Ownable {
 
+/**
+ * @notice administrative contract responsible for managing subscriptions for a given system of contracts registered
+ * by an administrator. 
+ *
+ * @dev The goal of this contract is to enable executions of existing contracts in a Reactive fashion without
+ * needing to modify the callback contracts
+ *
+ * To do this, an administrator registeres callbacks specifying the target and calldata passed to the address.call method.
+ * This contract handles payment of tx fees by inheriting from AbstractPayer
+ *
+ * The administrator can be an EOA or a contract, allowing for more dynamic setups.
+ 
+ */
+contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
+    using SubscriptionsLib for Subscription[];
+    using PythFeedLib for mapping(bytes32 => uint256);
+
+    /// @notice the admin of the contract
+    address immutable private _admin;
+
+    /// @notice the id of the reactive processor sending events to registered callbacks
     uint256 public processorId;
 
+    /// @notice list of subscriptions managed by this admin
+    Subscription[] public subscriptions;
+
+    /// @notice mapping of subscribed pyth datafeeds to subscribers
+    mapping(bytes32 => uint256) _pythFeedSubscriptions;
+
+    /// @notice mapping of subscriptions to processed events
+    mapping(uint256 => Event[]) public events;
+
+    /// @notice mapping of registered callbacks
     mapping(address => bool) public callbacks;
 
-    constructor()
-        Ownable(msg.sender)
-    {
+    /// @notice unregistered callback
+    error UnregisteredCallback();
 
+    /// @notice caller is not an admin
+    error Unauthorized();
+
+    /// @notice processor has already been set and cannot be changed
+    error ProcessorAlreadySet();
+
+
+    /// @notice only allow registered callbacks to execute
+    /// @dev reverts if the msg.sender is not a registered callback
+    modifier onlyRegisteredCallbacks(){
+        if(callbacks[msg.sender] == false){
+            revert UnregisteredCallback();
+        }
+
+        _;
     }
 
+    /// @notice only allow administrators to execute
+    /// @dev reverts if the msg.sender is not the admin
+    modifier onlyAdmin(){
+        if(msg.sender != _admin){
+            revert Unauthorized();
+        }
+
+        _;
+    }
+
+    /**
+     * @notice create a new administrator
+     * @param admin the administrator for the contract
+     * @param _vendor the vendor to pay for contract interactions
+     */ 
+    constructor(
+        address admin, 
+        IPayable _vendor
+    ) AbstractPayer() {
+        vendor = _vendor;
+        _admin = admin;
+    }
+
+    /**
+     * @notice set the id of the reactive contract responsible for processing requests
+     * @param id the id of the linked processor
+     */ 
     function setReactiveFeedProcessor(
         uint256 id
-    ) public {
+    ) external onlyAdmin {
         processorId = id;
     }
 
-    function registerCallback(
-        address callback
-    ) public {
-        callbacks[callback] = true;
+    // GETTERS
+
+    /**
+     * @notice gets the processed events for a given subscription
+     * @dev optionally pass a maximum number of events to return
+     * @param subscriptionId if of the subscription
+     * @param count maximum number of events to return. If set, the contract will return
+     * the latest events.
+     * @return output the list of events
+     */
+    function getEvents(
+        uint256 subscriptionId,
+        uint256 count
+    ) public view returns(Event[] memory output) {
+        output = events[subscriptionId];
+
+        if(count == 0 || count >= output.length){
+            return output;
+        } 
+
+        Event[] memory filteredOutput = new Event[](count);
+
+        uint256 startIndex = output.length - 1;
+
+        for(uint256 i = 0; i < count; i++){
+            uint256 index = startIndex - i;
+
+            filteredOutput[i] = output[index];
+        }
+
+        return filteredOutput;
     }
 
+
+    // EVENT PROCESSING METHODS
+
+    /**
+     * @notice process incoming reactive events matching subscriptions
+     * @param id the id of the matching subscription
+     * @param data the event data that triggered the subscription
+     */
+    function process(
+        uint256 id,
+        bytes calldata data
+    ) external {
+        Subscription memory subscription = subscriptions[id];
+
+        // the subscription is inactive, but we are still receiving events.
+        // cancel the subscription and return
+        if(!subscription.active){
+            emit CancelSubscription(processorId, id);
+
+            return;
+        }
+
+        // call the receiver and store the event in the subscription history
+        Event memory action = Event({
+            subscription: subscription,
+            timestamp: block.timestamp,
+            data: data,
+            success: false,
+            output: new bytes(0)
+        });
+        
+        (action.success, action.output) = subscription.to.call(subscription.args);
+
+        events[id].push(action);
+    }
+
+
+
+    // ACTION TRIGGER METHODS
+
+    /**
+     * @notice create a new price level trigger for a given callback
+     * @param feedId the pyth feed for the callback
+     * @param priceMin trigger callback below the price
+     * @param priceMax trigger callback above the price
+     * @param to the receiver of the event
+     * @param data the calldata for the call to the receiver
+     * @param gasLimit the gas limit for the contract call
+     */
     function newPriceLevelTrigger(
         bytes32 feedId,
         uint256 priceMin,
-        uint256 priceMax
-    ) public onlyRegisteredCallbacks {
+        uint256 priceMax,
+        address to,
+        bytes memory data,
+        uint256 gasLimit
+    ) external onlyAdmin {
+        // ensure we are subscribed to the requested datafeed
+        _pythFeedSubscriptions.subscribe(processorId, feedId);
 
+        // create the new local subscription
+        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit);
+
+        // create the reactive subscription
+        ReactiveTriggers.newPriceLevelTrigger(processorId, newSubscription.id, feedId, priceMin, priceMax, gasLimit);
     }
 
+    /**
+     * @notice create a new block number callback trigger
+     * @param chainId the chain to monitor
+     * @param blockNumber the block to trigger at
+     * @param to the receiver of the event
+     * @param data the calldata for the call to the receiver
+     * @param gasLimit the gas limit for the contract call
+     */
     function newBlockNumberTrigger(
-        bytes32 feedId,
-        uint256 chainId
-    ) public onlyRegisteredCallbacks {
+        uint256 chainId,
+        uint256 blockNumber,
+        address to,
+        bytes memory data,
+        uint256 gasLimit
+    ) external onlyAdmin {
+        // create the new local subscription
+        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit);
 
+        // create the reactive subscription
+        ReactiveTriggers.newBlockNumberTrigger(processorId, newSubscription.id, chainId, blockNumber, gasLimit);
     }
 
-    function newEventTrigger(
+    /**
+     * @notice create a new trigger to execute an action on a given duration
+     * @param interval the execution interval
+     * @param to the receiver of the event
+     * @param data the calldata for the call to the receiver
+     * @param gasLimit the gas limit for the contract call
+     */
+    function newTimedEventTrigger(
+        uint256 interval,
+        address to,
+        bytes memory data,
+        uint256 gasLimit
+    ) external onlyAdmin {
+        // create the new local subscription
+        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit);
+
+        // create the reactive subscription
+        ReactiveTriggers.newTimedEventTrigger(processorId, newSubscription.id, interval, gasLimit);
+    }
+
+
+    // EVENT SUBSCRIPTIONS
+
+    /**
+     * @notice create a persistent event subscription
+     * @dev at least 1 topic must be present
+     * @param chainId the chain to monitor. 0 for any chain
+     * @param emitter the address of the event emitter. 0 for any address
+     * @param topic0 the topic0. 0 for any topic
+     * @param topic1 the topic1. 0 for any topic
+     * @param topic2 the topic2. 0 for any topic
+     * @param topic3 the topic3. 0 for any topic
+     * @param to the receiver of the event
+     * @param data the calldata for the call to the receiver
+     * @param gasLimit the gas limit for the contract call
+     */
+    function newEventSubscription(
         uint256 chainId,
         address emitter,
-        bytes32 topic0,
-        bytes32 topic1,
-        bytes32 topic2,
-        bytes32 topic3
-    ) public onlyRegisteredCallbacks {
+        uint256 topic0,
+        uint256 topic1,
+        uint256 topic2,
+        uint256 topic3,
+        address to,
+        bytes memory data,
+        uint256 gasLimit
+    ) external onlyAdmin {
+        // create the new local subscription
+        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit);
 
+        // create the reactive subscription
+        ReactiveTriggers.newEventSubscription(processorId, newSubscription.id, chainId, emitter, topic0, topic1, topic2, topic3, gasLimit);
     }
+
 }

@@ -8,9 +8,6 @@ import {IPayable} from './interfaces/IPayable.sol';
 abstract contract AbstractPayer is IPayer {
     IPayable internal vendor;
 
-    constructor() {
-    }
-
     modifier authorizedSenderOnly() {
         require(address(vendor) == address(0) || msg.sender == address(vendor), 'Authorized sender only');
         _;

@@ -2,6 +2,5 @@
 pragma solidity ^0.8.27;
 
 contract DataFeedAdministrator {
-    event SubscribeDataFeed(uint256 processor, bytes32 feedId);
-    event UnSubscribeDataFeed(uint256 processor, bytes32 feedId);
+    event CancelSubscription(uint256 processor, uint256 id);
 }

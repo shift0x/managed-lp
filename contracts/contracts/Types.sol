@@ -13,3 +13,19 @@ struct PriceLevelTrigger {
     uint256 priceLower; 
     uint256 priceUpper; 
 }
+
+struct Subscription {
+    uint256 id;
+    bool active;
+    address to;
+    bytes args;
+    uint256 gasLimit;
+}
+
+struct Event {
+    Subscription subscription;
+    uint256 timestamp;
+    bytes data;
+    bytes output;
+    bool success;
+}

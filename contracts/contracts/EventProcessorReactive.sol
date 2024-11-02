@@ -10,6 +10,9 @@ import {
 } from './Types.sol';
 
 import {MarketLib} from './lib/MarketLib.sol';
+import {PythFeedLib} from './lib/PythFeedLib.sol';
+import {ReactiveTriggers} from './lib/ReactiveTriggers.sol';
+
 import {DataFeedAdministrator} from './DataFeedAdministrator.sol';
 
 /**
@@ -30,6 +33,9 @@ contract EventProcessorReactive is AbstractReactive, DataFeedAdministrator {
     /// @notice event topic used to identify requests for this contract
     uint256 public immutable ID; 
 
+    /// @notice reactive chain id
+    uint256 private constant REACTIVE_CHAIN_ID = 5318008;
+
     /// @notice topic for pyth price feed updates
     uint256 private constant PYTH_PRICE_FEED_UPDATE_TOPIC_0 = 0xd06a6b7f4918494b3719217d1802786c1f5112a6c1d88fe2cfec00b4584f6aec;
 
@@ -44,9 +50,6 @@ contract EventProcessorReactive is AbstractReactive, DataFeedAdministrator {
 
     /// @notice the address of the admin contract
     address public immutable adminAddress;
-
-    /// @notice the chains supported by the pyth oracles and reactive
-    uint256[] public chains;
 
     /// @notice received an unexpected event
     error UnknownEvent();
@@ -67,10 +70,9 @@ contract EventProcessorReactive is AbstractReactive, DataFeedAdministrator {
 
     /**
      * @notice Created new subscription to pyth price feed
-     * @param chainId The chain hosting the feed
      * @param marketId The market pair
      */
-    event SubscribePythFeed(uint256 chainId, uint256 marketId);
+    event SubscribePythFeed(uint256 marketId);
 
 
     /**
@@ -93,21 +95,6 @@ contract EventProcessorReactive is AbstractReactive, DataFeedAdministrator {
         // admin calls before they are executed
         adminAddress = _adminAddress;
         adminChainId = _adminChainId;
-
-        // manually add supported chains to listen for pyth events
-        // in the future this can be configurable by the admin address publishing an event. 
-        chains = new uint256[](6);
-        chains[0] = 11155111;    // ETH
-        chains[1] = 43114;       // AVAX
-        chains[2] = 42161;       // Arbitrum
-        chains[3] = 169;         // Manta Pacific
-        chains[4] = 56;          // BSC
-        chains[5] = 137;         // Polygon Pos
-
-        // at a minimum subscribe to the ETH / USD feed
-        bytes memory ethFeedId = abi.encodePacked(bytes32(0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace)); // ETH_USD
-        
-        _subscribeDataFeed(ethFeedId); 
     }
 
     // @inheritdoc IReactive
@@ -116,10 +103,10 @@ contract EventProcessorReactive is AbstractReactive, DataFeedAdministrator {
         address emitter,
         uint256 topic0,
         uint256 topic1,
-        uint256 topic2,
+        uint256,
         uint256,
         bytes calldata data,
-        uint256 block,
+        uint256 blockNumber,
         uint256
     ) override external vmOnly() {
         // We expect 2 types of events to be received. Price updates and administrative operations
@@ -136,10 +123,10 @@ contract EventProcessorReactive is AbstractReactive, DataFeedAdministrator {
             revert Unauthorized();
         }
 
-        // Perform the admin function based on the function signature passed in topic2
-        if(topic0 == uint256(SubscribeDataFeed.selector)){
+        // Perform the admin function based on the function signature passed
+        if(topic0 == uint256(PythFeedLib.SubscribeDataFeed.selector)){
             _subscribeDataFeed(data);
-        } else if(topic2 == uint256(UnSubscribeDataFeed.selector)){
+        } else if(topic0 == uint256(PythFeedLib.UnSubscribeDataFeed.selector)){
             _unsubscribeDataFeed(data);
         }
     }
@@ -149,9 +136,8 @@ contract EventProcessorReactive is AbstractReactive, DataFeedAdministrator {
      * @dev this function will subscribe to feed on all the configured chains
      * @param data raw event data
      */
-    function _subscribeDataFeed(bytes memory data) private {
+    function _subscribeDataFeed(bytes memory data) private vmOnly() {
         uint256 marketId = abi.decode(data, (uint256));
-        uint256[] memory supportedChains = chains;
 
         // short circuit if we are already subscribed to the requested feed
         Market memory market = markets[marketId];
@@ -162,26 +148,20 @@ contract EventProcessorReactive is AbstractReactive, DataFeedAdministrator {
 
         // since pyth is a pull oracle, we need to subscribe to events on all available
         // chains to make sure we have the updated price as soon as possible
-        for(uint256 i = 0; i < supportedChains.length; i++){
-            bytes memory payload = abi.encodeWithSignature(
-                "subscribe(uint256,address,uint256,uint256,uint256,uint256)",
-                supportedChains[i],
-                0,
-                PYTH_PRICE_FEED_UPDATE_TOPIC_0,
-                marketId,
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE
-            );
+        bytes memory payload = abi.encodeWithSignature(
+            "subscribe(uint256,address,uint256,uint256,uint256,uint256)",
+            0,
+            0,
+            PYTH_PRICE_FEED_UPDATE_TOPIC_0,
+            marketId,
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE
+        );
 
-            (bool subscription_result,) = address(service).call(payload);
+        // send subscription callback request to the Reactive Network 
+        emit Callback(REACTIVE_CHAIN_ID, address(this), 9000000, payload);
 
-            // revert if we are unable to create the subscription
-            if(subscription_result){
-                emit SubscribePythFeed(supportedChains[i], marketId);
-            } else {
-                revert SubscriptionFailed(supportedChains[i], marketId);
-            }
-        }
+        emit SubscribePythFeed(marketId);
 
         // Set the market to active and store the newly created market with default values
         // for timestamp and price (will be 0 respectively, allowing the next price update to initalize the market) 
@@ -195,7 +175,7 @@ contract EventProcessorReactive is AbstractReactive, DataFeedAdministrator {
      * @dev this function will unsubscribe to feed on all the configured chains
      * @param data raw event data
      */
-    function _unsubscribeDataFeed(bytes memory data) private {
+    function _unsubscribeDataFeed(bytes memory data) private vmOnly() {
         uint256 marketId = abi.decode(data, (uint256));
     }
 
@@ -207,7 +187,7 @@ contract EventProcessorReactive is AbstractReactive, DataFeedAdministrator {
     function _updatePrice(
         uint256 id,
         bytes calldata data
-    ) private {
+    ) private vmOnly() {
         (bool marketHasChanges,) = markets.updatePrice(id, data); 
 
         if(!marketHasChanges){

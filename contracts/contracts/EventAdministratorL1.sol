@@ -156,29 +156,11 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
      */
     function cancel(
         uint256 subscriptionId
-    ) external {
-        _cancel(subscriptionId);
+    ) external onlyAdmin {
+        subscriptions.cancel(subscriptionId, true);
     }
 
-    /**
-     * @notice cancel the given subscription
-     * @param id the subscription to cancel
-     */
-    function _cancel(
-        uint256 id
-    ) private {
-        Subscription memory subscription = subscriptions[id];
-
-        subscriptions[id].active = false;
-
-        // unregister the subscription from the market feeds if the subscription
-        // is not persistent (i.e block number triggers execute only once)
-        if(subscription.feedId != 0){
-            _pythFeedSubscriptions.unsubscribe(subscription.processor, bytes32(subscription.feedId));
-        }
-    }
-
-
+    
     // EVENT PROCESSING METHODS
 
     /**
@@ -206,9 +188,9 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         events[id].push(action);
 
         // cleanup non-peristent subscriptions since we are not expecting anymore events
-        // for the subscription
+        // for the subscription. No need to send the cancel to reactive since it will not fire again 
         if(subscription.isPersistent == false){
-            _cancel(id);
+            subscriptions.cancel(id, false);
         }
     }
 

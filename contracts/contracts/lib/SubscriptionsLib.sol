@@ -8,6 +8,8 @@ import {
 
 library SubscriptionsLib {
 
+    event CancelSubscription(uint256 processor, uint256 id);
+
     /**
      * @notice create a new subscription
      * @param self the list of existing subscriptions
@@ -37,6 +39,27 @@ library SubscriptionsLib {
         });
 
         self.push(subscription);
+
+        return subscription;
+    }
+
+    /**
+     * @notice cancel the given subscription
+     * @param id the subscription to cancel
+     * @param publish true if the cancel event should be sent to reactive
+     */
+    function cancel(
+        Subscription[] storage self,
+        uint256 id,
+        bool publish
+    ) internal returns (Subscription memory subscription) {
+        subscription = self[id];
+
+        self[id].active = false;
+
+        if(publish) {
+            emit CancelSubscription(subscription.processor, id);
+        }
 
         return subscription;
     }

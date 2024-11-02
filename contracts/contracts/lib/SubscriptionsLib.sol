@@ -22,7 +22,8 @@ library SubscriptionsLib {
         bytes memory data,
         uint256 gasLimit,
         uint256 feedId,
-        bool isPersistent
+        bool isPersistent,
+        uint256 processor
     ) internal returns (Subscription memory subscription) {
         subscription = Subscription({
             id: self.length,
@@ -31,7 +32,8 @@ library SubscriptionsLib {
             to: to,
             args: data,
             active: true,
-            gasLimit: gasLimit
+            gasLimit: gasLimit,
+            processor: processor
         });
 
         self.push(subscription);

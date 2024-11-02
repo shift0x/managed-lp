@@ -22,6 +22,7 @@ struct Subscription {
     address to;
     bytes args;
     uint256 gasLimit;
+    uint256 processor;
 }
 
 struct Event {

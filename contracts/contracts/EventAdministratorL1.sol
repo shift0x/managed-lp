@@ -30,7 +30,8 @@ import {
 contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
     using SubscriptionsLib for Subscription[];
     using SubscriptionsLib for Subscription;
-    using PythFeedLib for mapping(bytes32 => uint256);
+    using PythFeedLib for mapping(uint256 => mapping(bytes32 => uint256));
+    using ReactiveTriggers for Subscription;
 
     /// @notice the admin of the contract
     address immutable private _admin;
@@ -41,14 +42,17 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
     /// @notice list of subscriptions managed by this admin
     Subscription[] public subscriptions;
 
-    /// @notice mapping of subscribed pyth datafeeds to subscribers
-    mapping(bytes32 => uint256) _pythFeedSubscriptions;
+    /// @notice mapping of processors to subscribed pyth datafeeds to subscribers
+    mapping(uint256 => mapping(bytes32 => uint256)) _pythFeedSubscriptions;
 
     /// @notice mapping of subscriptions to processed events
     mapping(uint256 => Event[]) public events;
 
     /// @notice mapping of registered callbacks
     mapping(address => bool) public callbacks;
+
+    /// @notice event used to test subscriptions
+    event Echo(uint256 blockNumber);
 
     /// @notice unregistered callback
     error UnregisteredCallback();
@@ -103,6 +107,11 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         processorId = id;
     }
 
+    // TESTING METHODS
+    function echo() public {
+        emit Echo(block.number);
+    }
+
     // GETTERS
 
     /**
@@ -139,6 +148,37 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
     }
 
 
+    // Mangement actions
+
+    /**
+     * @notice cancel the given subscription
+     * @param subscriptionId the subscription to cancel
+     */
+    function cancel(
+        uint256 subscriptionId
+    ) external {
+        _cancel(subscriptionId);
+    }
+
+    /**
+     * @notice cancel the given subscription
+     * @param id the subscription to cancel
+     */
+    function _cancel(
+        uint256 id
+    ) private {
+        Subscription memory subscription = subscriptions[id];
+
+        subscriptions[id].active = false;
+
+        // unregister the subscription from the market feeds if the subscription
+        // is not persistent (i.e block number triggers execute only once)
+        if(subscription.feedId != 0){
+            _pythFeedSubscriptions.unsubscribe(subscription.processor, bytes32(subscription.feedId));
+        }
+    }
+
+
     // EVENT PROCESSING METHODS
 
     /**
@@ -155,7 +195,7 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         // the subscription is inactive, but we are still receiving events.
         // cancel the subscription and return
         if(!subscription.active){
-            emit CancelSubscription(processorId, id);
+            emit CancelSubscription(subscription.processor, id);
 
             return;
         } 
@@ -164,11 +204,11 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         Event memory action = subscription.execute(data);
 
         events[id].push(action);
- 
-        // unregister the subscription from the market feeds if the subscription
-        // is not persistent (i.e block number triggers execute only once)
-        if(subscription.feedId != 0 && subscription.isPersistent == false){
-            _pythFeedSubscriptions.unsubscribe(processorId, bytes32(subscription.feedId));
+
+        // cleanup non-peristent subscriptions since we are not expecting anymore events
+        // for the subscription
+        if(subscription.isPersistent == false){
+            _cancel(id);
         }
     }
 
@@ -197,10 +237,10 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         _pythFeedSubscriptions.subscribe(processorId, feedId);
 
         // create the new local subscription
-        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, uint256(feedId), false);
+        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, uint256(feedId), false, processorId);
 
         // create the reactive subscription
-        ReactiveTriggers.newPriceLevelTrigger(processorId, newSubscription.id, feedId, priceMin, priceMax, gasLimit);
+        newSubscription.newPriceLevelTrigger(feedId, priceMin, priceMax, gasLimit);
     }
 
     /**
@@ -219,10 +259,10 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         uint256 gasLimit
     ) external onlyAdmin {
         // create the new local subscription
-        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, 0, false);
+        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, 0, false, processorId);
 
         // create the reactive subscription
-        ReactiveTriggers.newBlockNumberTrigger(processorId, newSubscription.id, chainId, blockNumber, gasLimit);
+        newSubscription.newBlockNumberTrigger(chainId, blockNumber, gasLimit);
     }
 
     /**
@@ -239,10 +279,10 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         uint256 gasLimit
     ) external onlyAdmin {
         // create the new local subscription
-        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, 0, true);
+        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, 0, true, processorId);
 
         // create the reactive subscription
-        ReactiveTriggers.newTimedEventTrigger(processorId, newSubscription.id, interval, gasLimit);
+        newSubscription.newTimedEventTrigger(interval, gasLimit);
     }
 
 
@@ -273,10 +313,10 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         uint256 gasLimit
     ) external onlyAdmin {
         // create the new local subscription
-        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, 0, true);
+        Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, 0, true, processorId);
 
         // create the reactive subscription
-        ReactiveTriggers.newEventSubscription(processorId, newSubscription.id, chainId, emitter, topic0, topic1, topic2, topic3, gasLimit);
+        newSubscription.newEventSubscription(chainId, emitter, topic0, topic1, topic2, topic3, gasLimit);
     }
 
 }

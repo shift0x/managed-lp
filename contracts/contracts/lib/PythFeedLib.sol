@@ -15,18 +15,18 @@ library PythFeedLib {
      * @param feedId the feed to subscribe to
      */
     function subscribe(
-        mapping(bytes32 => uint256) storage self,
+        mapping(uint256 => mapping(bytes32 => uint256)) storage self,
         uint256 processorId,
         bytes32 feedId
     ) internal {
         // start a new feed subscription we are not currently subscribed
-        uint256 feedSubscriberCount = self[feedId];
+        uint256 feedSubscriberCount = self[processorId][feedId];
 
         if(feedSubscriberCount == 0){
             emit SubscribeDataFeed(processorId, feedId);
         }
 
-        self[feedId]++;
+        self[processorId][feedId]++;
     }
 
     /**
@@ -36,11 +36,11 @@ library PythFeedLib {
      * @param feedId the feed to subscribe to
      */
     function unsubscribe(
-        mapping(bytes32 => uint256) storage self,
+        mapping(uint256 => mapping(bytes32 => uint256)) storage self,
         uint256 processorId,
         bytes32 feedId
     ) internal {
-        uint256 feedSubscriberCount = self[feedId];
+        uint256 feedSubscriberCount = self[processorId][feedId];
 
         // this is the last subscriber, so remove the subscription
         if(feedSubscriberCount == 1){
@@ -50,6 +50,6 @@ library PythFeedLib {
             return;
         }
 
-        self[feedId]--;
+        self[processorId][feedId]--;
     }
 }

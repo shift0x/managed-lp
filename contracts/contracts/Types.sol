@@ -1,17 +1,42 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.27;
 
+enum FeedType {
+    TokenTransfer,
+    PythMarket
+}
+
+enum FeedStatus {
+    Stopped,
+    Active
+}
+
 struct Market {
-    bool active;
+    FeedStatus status;
     uint64 timestamp;
     int64 price;
 }
 
+struct ChainInfo {
+    uint256 id;
+    uint256 blockNumber;
+}
+
 struct PriceLevelTrigger {
-    uint256 chainId; 
-    address receiver; 
     uint256 priceLower; 
     uint256 priceUpper; 
+    ReactiveSubscription subscription;
+}
+
+struct BlockNumberTrigger {
+    uint256 chainId;
+    uint256 blockNumber;
+    ReactiveSubscription subscription;
+}
+
+struct ReactiveSubscription {
+    uint256 id;
+    uint256 gasLimit;
 }
 
 struct Subscription {

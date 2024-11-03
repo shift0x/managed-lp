@@ -1,9 +1,9 @@
 import {ethers as hardhat} from 'hardhat'
 import {ethers} from 'ethers'
-import { getRPCEndpointForChain } from './chains'
+import { getProxyAddressForChain, getRPCEndpointForChain } from './chains'
 import { vars } from "hardhat/config";
 
-const getProviderForChain = async (chain: string, varsKey: string = "SMART_CONTRACT_DEPLOYER"): Promise<ethers.Wallet> => {
+export const getProviderForChain = async (chain: string, varsKey: string = "SMART_CONTRACT_DEPLOYER"): Promise<ethers.Wallet> => {
     const provider = new ethers.JsonRpcProvider(getRPCEndpointForChain(chain))
     
     if(!vars.has(varsKey)){
@@ -28,9 +28,11 @@ const deployReactiveContract = async(chain: string, admin: string) : Promise<str
 
     const adminChainId = (await adminChain.provider?.getNetwork()).chainId;
 
-    const reactive = await factory.deploy(adminChainId, admin)
+    const reactive = await factory.deploy(adminChainId, admin);
 
     await reactive.waitForDeployment()
+
+    await reactive.subscribeToAdminContractEvents({gasLimit: 2000000})
 
     const address = await reactive.getAddress()
 
@@ -41,9 +43,15 @@ const deployReactiveContract = async(chain: string, admin: string) : Promise<str
 
 const deployAdministrator = async(chain: string) : Promise<string> => {
     const deployer = await getProviderForChain(chain)
+    const proxy = getProxyAddressForChain(chain)
+
+    if(!proxy){
+        throw "callbacks are not supported for the selected chain"
+    }
+
     const factory = await hardhat.getContractFactory("EventAdministratorL1", deployer)
 
-    const contract = await factory.deploy()
+    const contract = await factory.deploy(deployer.address, proxy)
     
     //await contract.waitForDeployment()
 
@@ -60,8 +68,8 @@ const setReactiveEventProcessor = async(chain: string, admin: string, reactive: 
     const reactiveContract = await hardhat.getContractAt("EventProcessorReactive", reactive, reactiveChainProvider)
 
     const id = await reactiveContract.ID()
-
-    await adminContract.setReactiveFeedProcessor(id)
+    
+    await adminContract.setReactiveFeedProcessor(id, { gasLimit: 100000 })
 
     console.log(`updated event processor [${chain}]: ${id}`)
 }

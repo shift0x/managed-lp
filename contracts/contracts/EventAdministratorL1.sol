@@ -292,7 +292,7 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         uint256 topic3,
         address to,
         bytes memory data,
-        uint256 gasLimit
+        uint64 gasLimit
     ) external onlyAdmin {
         // create the new local subscription
         Subscription memory newSubscription = subscriptions.create(to, data, gasLimit, 0, true, processorId);
@@ -301,4 +301,6 @@ contract EventAdministratorL1 is DataFeedAdministrator, AbstractPayer {
         newSubscription.newEventSubscription(chainId, emitter, topic0, topic1, topic2, topic3, gasLimit);
     }
 
+
+     receive() external payable {}
 }

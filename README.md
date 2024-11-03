@@ -1,2 +1,2 @@
-# managed-lp
-Platform for actively managed LP strategies for UniswapV3 pools. Powered by reactive protocol
+# reactive-administrator
+Easily connect existing smart contract assets to reactive
